@@ -1,0 +1,87 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import folium
+from folium.plugins import HeatMap
+
+# 1. Load and clean the data
+def load_data(filepath):
+    df = pd.read_csv(filepath, parse_dates=['Start_Time'], low_memory=False)
+    # Keep rows where key fields are not missing
+    df = df.dropna(subset=['Start_Lat', 'Start_Lng', 'Weather_Condition', 'Road_Conditions'])
+    return df
+
+# 2. Add time-of-day slot (Morning, Afternoon, Evening, Night)
+def add_time_of_day(df):
+    def slot(hour):
+        if hour < 6:
+            return 'Night'
+        elif hour < 12:
+            return 'Morning'
+        elif hour < 18:
+            return 'Afternoon'
+        else:
+            return 'Evening'
+    df['Time_of_Day'] = df['Start_Time'].dt.hour.apply(slot)
+
+# 3. Generic category plot (Road, Weather, Time)
+def plot_category(df, col, top_n=None):
+    data = df.copy()
+    if top_n:
+        top = data[col].value_counts().nlargest(top_n).index
+        data = data[data[col].isin(top)]
+    plt.figure(figsize=(10, 6))
+    sns.countplot(data=data, x=col, hue='Severity', order=sorted(data[col].unique()))
+    plt.title(f'Accident Severity by {col.replace("_", " ").title()}')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+# 4. Plot stacked proportion bars for severity by category
+def plot_pivot(df, col):
+    pivot = pd.crosstab(df[col], df['Severity'], normalize='index')
+    pivot.plot(kind='bar', stacked=True, figsize=(10, 6), colormap='tab20')
+    plt.title(f'Severity Distribution by {col.replace("_", " ").title()}')
+    plt.ylabel('Proportion')
+    plt.tight_layout()
+    plt.show()
+
+# 5. Create a hotspot map based on accident severity
+def create_hotspot_map(df, output_html='hotspots.html', by_severity=False):
+    coords = df[['Start_Lat', 'Start_Lng']].values
+    m = folium.Map(location=[coords[:, 0].mean(), coords[:, 1].mean()], zoom_start=5)
+    
+    if by_severity:
+        for sev in sorted(df['Severity'].unique()):
+            sev_df = df[df['Severity'] == sev]
+            sev_coords = sev_df[['Start_Lat', 'Start_Lng']].values
+            heat = HeatMap(sev_coords, radius=8, blur=15, min_opacity=0.3)
+            folium.FeatureGroup(name=f'Severity {sev}').add_child(heat).add_to(m)
+        folium.LayerControl().add_to(m)
+    else:
+        HeatMap(coords, radius=8, blur=15, min_opacity=0.3).add_to(m)
+    
+    m.save(output_html)
+    print(f'[✔] Accident hotspot map saved to: {output_html}')
+
+# 6. Main function to run everything
+def main():
+    filepath = 'US_Accidents_Dec21_updated.csv'  # Replace with your file path
+    df = load_data(filepath)
+    add_time_of_day(df)
+
+    print("[✔] Data loaded and time of day column added.")
+    
+    # Visualizations
+    plot_category(df, 'Road_Conditions')
+    plot_category(df, 'Weather_Condition', top_n=10)
+    plot_category(df, 'Time_of_Day')
+    
+    plot_pivot(df, 'Road_Conditions')
+    plot_pivot(df, 'Weather_Condition')
+
+    # Create severity-based hotspot map
+    create_hotspot_map(df, output_html='hotspots.html', by_severity=True)
+
+if __name__ == '__main__':
+    main()
